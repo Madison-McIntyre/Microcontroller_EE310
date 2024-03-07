@@ -1,0 +1,156 @@
+//-----------------------------
+// Title: Temperature heating and cooling 
+//-----------------------------
+// Purpose: this program is set up like an AC unit with a sensor. there is a
+//    keypad input provided by the user that sets a hot or cold tempature. 
+//    then a sensor is set at a threshold temperture to know when the referance 
+//    temperature compares to the measured
+// Dependencies: TempConfig.inc, xc.inc
+// Compiler: PIC18F46K42
+// Author: Madison McIntyre
+// OUTPUTS: PORTD1, PORTD2
+// INPUTS: KEYPAD input and sensor input
+// Versions:
+//  	V0.1: 3/4/24 - First version 
+//  	V0.2: 3/5/24 - add decimal to hex
+//	V0.3: 3/6-7/24 - Debug
+//	V1.0: 3/7/24 - final version debugged
+//-----------------------------
+
+;----------------
+; Initialization
+;----------------
+    
+#include "TempConfig.inc"
+#include <xc.inc>
+    
+;---------------------
+; Program Inputs
+;---------------------
+#define measuredTemp	 15		    ;sensor temperture in decimal
+#define refTemp		 0		    ;keypad temperture in deicmal
+
+    
+;---------------------
+; Program Outputs
+;---------------------
+#define		heater	    PORTD,1	    ;LED Heater output
+#define		cooler	    PORTD,2	    ;LED Cooler output
+
+;---------------------
+; Registers
+;---------------------
+refTempREG	EQU	    0x20	    
+measuredTempREG	EQU	    0x21
+contREG		EQU	    0x22
+NUME		EQU	    0x25	    ;numerator (register)
+QU		EQU	    0x30	    ;quotient (register)
+DEN		EQU	    0xA		    ;denominator = 10
+#define		measuredL   0x62	    ;Low Byte for measured temperature
+#define		measuredM   0x61	    ;Mid Byte for measured temperature	    
+#define		measuredH   0x60	    ;High Byte for measured temperature
+#define		refL	    0x72	    ;Low Byte for Referance temperature
+#define		refM	    0x71	    ;Mid Byte for Referance temperature
+#define		refH	    0x70	    ;High Byte for Referance temperature		
+	
+;---------------------
+; Main Program
+;---------------------
+    PSECT absdata,abs,ovrld	    ;Do not change
+    org 0x20			    ;start code at REG20
+   
+    MOVLW   refTemp		    ;move input into WREG
+    MOVWF   refTempREG		    ;REG20 is now refTemp
+    MOVLW   measuredTemp	    ;move input into WREG
+    MOVWF   measuredTempREG	    ;REG21 is now measuredTemp  
+    
+    MOVLW   measuredTemp	    ;check if measuredTemp is negative
+    ADDLW   0x0	
+    BNN	    SIGNSWITCH
+    NEGF    measuredTempREG	    ;if negativeswitch to positive
+    
+    ;-----------------    
+    ;DEC to HEX
+    ;-----------------  
+SIGNSWITCH:
+    MOVLW   refTemp		    ;Convert refTemp from hex to dec
+    MOVWF   NUME		    ;put numerator in WREG
+    MOVLW   DEN
+    CLRF    QU,1		    ;clear REG30   
+D_1:
+    INCF    QU,1		    ;increment REG30
+    SUBWF   NUME		    ;REG25 - WREG
+    BC	    D_1			    ;repeat, if NUME > 0
+    ADDWF   NUME		    ;put number back in REG25
+    DECF    QU,1		    ;decrement QU 
+    MOVFF   NUME,refL		    ;save the low byte
+    MOVFF   QU,NUME		    ;again
+    CLRF    QU			    ;clear REG30
+D_2:
+    INCF    QU,1
+    SUBWF   NUME		    ;sub WREG from NUME value
+    BC	    D_2			    
+    ADDWF   NUME		    
+    DECF    QU,1
+    MOVFF   NUME,refM		    ;save middle byte
+    MOVFF   QU,refH		    ;save high byte
+    MOVFF   measuredTempREG, NUME   ;Convert measuredTemp to deicmal and store in REG25
+    MOVLW   DEN
+    CLRF    QU,1		    ;clear quotient reg
+D_3:
+    INCF    QU,1		    ;increment REG30
+    SUBWF   NUME		    ;NUME - WREG, store in wreg
+    BC	    D_3			    ;if NUME > 0, repeat
+    ADDWF   NUME		    ;put number back in NUME
+    DECF    QU,1		    ;decrement QU since we reversed the subtraction
+    MOVFF   NUME,measuredL	    ;save the low byte
+    MOVFF   QU,NUME		    ;again
+    CLRF    QU			    ;clear REG30
+D_4:
+    INCF    QU,1
+    SUBWF   NUME		    ;sub WREG from NUME value, store in WREG
+    BC	    D_4			    ;C = 1
+    ADDWF   NUME		    
+    DECF    QU,1
+    MOVFF   NUME,measuredM	    ;save middle byte
+    MOVFF   QU,refH		    ;save high byte
+    MOVLW   measuredTemp	    ;double check measured temperature
+    MOVWF   measuredTempREG	    ;if negative  
+    ;-----------------    
+    ;configure port D
+    ;-----------------      
+    CLRF   TRISD		    ;set all PORTC bits to 0
+    BANKSEL ANSELD		    ;initialize port
+    CLRF   ANSELD		    ;set ouput to low
+    
+    SUBWF   refTempREG, 0	    ;set dbit = 0 
+    BZ	    NOTHING		    ;if refTemp = measuredTemp
+    
+    MOVLW   measuredTemp
+    ADDLW   0x0
+    BN	    HEATING
+    
+    MOVLW   refTemp	      
+    CPFSGT  measuredTempREG	    ;Check measuredTemp > refTemp, if true skip
+    GOTO    HEATING		    ;if measuredTemp < refTemp
+    GOTO    COOLING		    ;if measuredTemp > refTemp
+    
+    ;-----------------    
+    ;Temp Compare
+    ;-----------------     
+HEATING:			    ;measuredTemp < refTemp
+    MOVLW   0x1
+    MOVWF   contREG		    ;contReg = 1
+    BSF	    heater
+    GOTO    FINISH   
+COOLING:			    ;measuredTemp > refTemp
+    MOVLW   0x2
+    MOVWF   contREG		    ;contReg = 2
+    BSF	    cooler
+    GOTO    FINISH 
+NOTHING:
+    MOVLW   0x0
+    MOVWF   contREG		    ;contReg = 0
+    GOTO    FINISH   
+FINISH:
+    SLEEP
